@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>해외선물 틱 손익 계산기</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: 종목 선택 바 → [입력 | 결과] 2단 → 종목 스펙표. 호가창처럼 수익=빨강, 손실=파랑 */
+:root{
+  --bg:#EEF1F6; --panel:#FFFFFF; --panel-2:#F5F7FB; --line:#D8DEE9;
+  --fg:#141B2B; --muted:#5E6A80; --accent:#2B4FD8; --accent-soft:#E3E9FF;
+  --up:#D8322A; --up-soft:#FDECEA; --down:#1F63D6; --down-soft:#E7EFFD;
+  --sans:"IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0D1220; --panel:#151C2E; --panel-2:#1B2338; --line:#28324A;
+  --fg:#E6EAF3; --muted:#8D98AF; --accent:#7F9BFF; --accent-soft:#222C4C;
+  --up:#FF6A5F; --up-soft:#3A1E22; --down:#5C9BFF; --down-soft:#18284A; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0D1220; --panel:#151C2E; --panel-2:#1B2338; --line:#28324A;
+  --fg:#E6EAF3; --muted:#8D98AF; --accent:#7F9BFF; --accent-soft:#222C4C;
+  --up:#FF6A5F; --up-soft:#3A1E22; --down:#5C9BFF; --down-soft:#18284A; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.5;padding:0 16px}
+.wrap{max-width:960px;margin:0 auto;padding-block:28px 48px;display:flex;flex-direction:column;gap:18px}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+h1{margin:0;font-size:24px;font-weight:700;letter-spacing:-.01em;text-wrap:balance}
+.sub{margin:2px 0 0;color:var(--muted);font-size:13px}
+.ratechip{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.ratechip b{color:var(--fg);font-weight:600}
+
+/* 종목 탭 */
+.tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.tab{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:10px;padding:10px 12px;text-align:left;cursor:pointer;font:inherit;display:flex;flex-direction:column;gap:2px;min-width:0}
+.tab:hover{border-color:var(--accent)}
+.tab:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tab .code{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.tab .nm{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tab .pv{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.tab[aria-selected="true"]{background:var(--accent-soft);border-color:var(--accent)}
+.tab[aria-selected="true"] .code,.tab[aria-selected="true"] .pv{color:var(--accent)}
+
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:16px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.panel h2{margin:0;font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.04em}
+
+.spec{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.spec div{background:var(--panel-2);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column}
+.spec span{font-size:11.5px;color:var(--muted)}
+.spec b{font-family:var(--mono);font-weight:600;font-size:14px}
+
+.seg{display:inline-flex;background:var(--panel-2);border:1px solid var(--line);border-radius:9px;padding:3px;gap:3px}
+.seg button{appearance:none;border:0;background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:500;padding:6px 12px;border-radius:7px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.seg.side button[data-side="buy"][aria-pressed="true"]{color:var(--up)}
+.seg.side button[data-side="sell"][aria-pressed="true"]{color:var(--down)}
+
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:13px;font-weight:500}
+.field .hint{font-size:12px;color:var(--muted)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input[type="text"]{width:100%;font-family:var(--mono);font-size:18px;font-variant-numeric:tabular-nums;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--fg)}
+input[type="text"]::placeholder{color:var(--muted);opacity:.7}
+.chips{display:flex;gap:6px}
+.chip{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--fg);font-family:var(--mono);font-size:13px;padding:4px 10px;border-radius:999px;cursor:pointer}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+.calc{appearance:none;border:0;background:var(--accent);color:#fff;font:inherit;font-weight:700;font-size:16px;padding:13px;border-radius:10px;cursor:pointer}
+:root[data-theme="dark"] .calc{color:#0D1220}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .calc{color:#0D1220}}
+.calc:hover{filter:brightness(1.08)}
+.err{color:var(--up);font-size:13px;margin:0}
+
+/* 결과 */
+.result{justify-content:flex-start}
+.reshead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.cur{appearance:none;border:1px solid var(--accent);background:transparent;color:var(--accent);font:inherit;font-weight:600;font-size:13.5px;padding:7px 14px;border-radius:9px;cursor:pointer}
+.cur:hover{background:var(--accent-soft)}
+.big{border-radius:12px;padding:20px;background:var(--panel-2);display:flex;flex-direction:column;gap:6px}
+.big.up{background:var(--up-soft)} .big.down{background:var(--down-soft)}
+.verdict{font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:6px}
+.big.up .verdict,.big.up .amt{color:var(--up)} .big.down .verdict,.big.down .amt{color:var(--down)}
+.amt{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;font-size:clamp(28px,6vw,40px);line-height:1.15;overflow-wrap:anywhere}
+.alt{font-family:var(--mono);font-size:13.5px;color:var(--muted)}
+.story{margin:0;font-size:14px;color:var(--muted)}
+.story b{color:var(--fg)}
+dl.break{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:13.5px}
+dl.break dt{color:var(--muted)}
+dl.break dd{margin:0;text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.empty{color:var(--muted);font-size:14px;margin:0}
+
+/* 표 */
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:620px}
+th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{font-size:12px;font-weight:600;color:var(--muted)}
+th:first-child,td:first-child{text-align:left}
+td.num{font-family:var(--mono)}
+tbody tr{cursor:pointer}
+tbody tr:hover td{background:var(--panel-2)}
+tbody tr.on td{background:var(--accent-soft)}
+
+.rates{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.rates input{font-size:15px;padding:8px 10px}
+.note{font-size:12px;color:var(--muted);margin:0}
+
+@media (max-width:760px){
+  .tabs{grid-template-columns:repeat(3,1fr)}
+  .grid{grid-template-columns:1fr}
+}
+@media (max-width:420px){
+  .tabs{grid-template-columns:repeat(2,1fr)}
+  .spec{grid-template-columns:repeat(2,1fr)}
+  .two,.rates{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:no-preference){.big{transition:background .2s}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>해외선물 틱 손익 계산기</h1>
+      <p class="sub">종목 고르고 · 계약수 · 포인트 넣고 · 계산하기</p>
+    </div>
+    <div class="ratechip">
+      <span>USD/KRW <b class="num" id="chipUsd"></b></span>
+      <span>JPY/KRW(100엔) <b class="num" id="chipJpy"></b></span>
+    </div>
+  </header>
+
+  <div class="tabs" role="tablist" id="tabs"></div>
+
+  <div class="grid">
+    <section class="panel" aria-labelledby="inTitle">
+      <h2 id="inTitle">입력</h2>
+      <div class="spec" id="spec"></div>
+
+      <div class="field">
+        <label for="qty">계약수</label>
+        <div class="row">
+          <input type="text" id="qty" inputmode="numeric" placeholder="예: 1, 5, 10" autocomplete="off" style="flex:1;min-width:120px">
+          <div class="chips">
+            <button class="chip" type="button" data-q="1">1</button>
+            <button class="chip" type="button" data-q="5">5</button>
+            <button class="chip" type="button" data-q="10">10</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <span style="font-size:13px;font-weight:500">입력 방식</span>
+        <div class="seg" id="modeSeg">
+          <button type="button" data-mode="pt" aria-pressed="true">포인트로</button>
+          <button type="button" data-mode="tick" aria-pressed="false">틱으로</button>
+          <button type="button" data-mode="price" aria-pressed="false">진입가 · 청산가</button>
+        </div>
+      </div>
+
+      <div class="field" id="moveBox">
+        <label for="move" id="moveLabel">움직인 포인트</label>
+        <input type="text" id="move" inputmode="decimal" placeholder="예: 100   (손실이면 -100)" autocomplete="off">
+        <span class="hint" id="moveHint"></span>
+      </div>
+
+      <div id="priceBox" hidden>
+        <div class="field" style="margin-bottom:10px">
+          <span style="font-size:13px;font-weight:500">포지션</span>
+          <div class="seg side" id="sideSeg">
+            <button type="button" data-side="buy" aria-pressed="true">매수 (롱)</button>
+            <button type="button" data-side="sell" aria-pressed="false">매도 (숏)</button>
+          </div>
+        </div>
+        <div class="two">
+          <div class="field"><label for="entry">진입가</label><input type="text" id="entry" inputmode="decimal" autocomplete="off"></div>
+          <div class="field"><label for="exit">청산가 (현재가)</label><input type="text" id="exit" inputmode="decimal" autocomplete="off"></div>
+        </div>
+      </div>
+
+      <p class="err" id="err" hidden></p>
+      <button class="calc" type="button" id="calcBtn">계산하기</button>
+    </section>
+
+    <section class="panel result" aria-live="polite" aria-labelledby="outTitle">
+      <div class="reshead">
+        <h2 id="outTitle">결과</h2>
+        <button class="cur" type="button" id="curBtn">원화로</button>
+      </div>
+      <div id="out"></div>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="tblTitle">
+    <h2 id="tblTitle">종목 스펙 (1계약 기준 · 줄 누르면 선택)</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>종목</th><th>틱 사이즈</th><th>1틱 가치</th><th>1포인트 가치</th><th>1포인트 (원화)</th><th>위탁증거금</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="rateTitle">
+    <h2 id="rateTitle">원화 환산 환율</h2>
+    <div class="rates">
+      <div class="field"><label for="rUsd">USD/KRW (1달러 = 원)</label><input type="text" id="rUsd" inputmode="decimal" autocomplete="off"></div>
+      <div class="field"><label for="rJpy">JPY/KRW (100엔 = 원)</label><input type="text" id="rJpy" inputmode="decimal" autocomplete="off"></div>
+    </div>
+    <p class="note" id="rateNote"></p>
+  </section>
+</div>
+
+<script>
+(function(){
+  // 키움 HTS 캡처(2026-10-09) 기준 스펙
+  var SYMS = [
+    {id:"MNQ", code:"MNQZ26", name:"마이크로 나스닥100", full:"Micro Mini NASDAQ 100 (26.12)", ccy:"USD", tick:0.25,  tv:0.5, dec:2, margin:4524,   ex:"CME"},
+    {id:"MGC", code:"MGCZ26", name:"마이크로 골드",       full:"Micro Gold (26.12)",              ccy:"USD", tick:0.1,   tv:1,   dec:1, margin:2299,   ex:"CME"},
+    {id:"MCL", code:"MCLX26", name:"마이크로 WTI",        full:"Micro Crude Oil (26.11)",         ccy:"USD", tick:0.01,  tv:1,   dec:2, margin:958,    ex:"CME"},
+    {id:"SIL", code:"SILZ26", name:"마이크로 실버",       full:"Micro Silver (26.12)",            ccy:"USD", tick:0.005, tv:5,   dec:3, margin:6727,   ex:"CME"},
+    {id:"NKM", code:"NKMZ26", name:"미니 닛케이225",      full:"Mini Nikkei225 (26.12)",          ccy:"JPY", tick:5,     tv:500, dec:0, margin:437416, ex:"OSE"}
+  ];
+  var DEFAULT_RATES = {usd:1343.36, jpy100:850.67, asOf:"Investing.com 2026-10-09 기준"};
+
+  var state = {sym:SYMS[0], mode:"pt", side:"buy", showKrw:false, last:null};
+  var rates = {usd:DEFAULT_RATES.usd, jpy100:DEFAULT_RATES.jpy100, custom:false};
+  try{ var s = JSON.parse(localStorage.getItem("pnl-rates")||"null"); if(s && s.usd>0 && s.jpy100>0){ rates = s; } }catch(e){}
+
+  var $ = function(id){return document.getElementById(id)};
+  function ppv(s){ return s.tv / s.tick; }           // 1포인트 가치
+  function num(v){ v = String(v||"").replace(/,/g,"").trim(); if(v==="") return NaN; return Number(v); }
+  function fmt(n, d){ return n.toLocaleString("ko-KR",{minimumFractionDigits:d, maximumFractionDigits:d}); }
+  function money(n, ccy, signed){
+    var sign = signed ? (n>0?"+":n<0?"−":"") : (n<0?"−":"");
+    var a = Math.abs(n);
+    if(ccy==="USD") return sign+"$"+fmt(a, a%1? 2:0);
+    if(ccy==="JPY") return sign+"¥"+fmt(Math.round(a),0);
+    return sign+fmt(Math.round(a),0)+"원";
+  }
+  function toKrw(n, ccy){ return ccy==="USD" ? n*rates.usd : n*rates.jpy100/100; }
+  function toUsd(n, ccy){ return ccy==="USD" ? n : n*(rates.jpy100/100)/rates.usd; }
+  function trimNum(n){ return Number(n.toFixed(6)).toString(); }
+
+  // 종목 탭
+  var tabs = $("tabs");
+  SYMS.forEach(function(s){
+    var b = document.createElement("button");
+    b.className="tab"; b.type="button"; b.setAttribute("role","tab"); b.dataset.id=s.id;
+    b.innerHTML='<span class="code">'+s.code+'</span><span class="nm">'+s.name+'</span><span class="pv">1pt = '+money(ppv(s),s.ccy)+'</span>';
+    b.addEventListener("click",function(){ selectSym(s.id); });
+    tabs.appendChild(b);
+  });
+
+  function renderTable(){
+    var tb = $("tbody"); tb.innerHTML="";
+    SYMS.forEach(function(s){
+      var tr=document.createElement("tr"); tr.dataset.id=s.id;
+      if(s===state.sym) tr.className="on";
+      tr.innerHTML='<td><b>'+s.name+'</b> <span style="color:var(--muted);font-family:var(--mono);font-size:12px">'+s.code+'</span></td>'+
+        '<td class="num">'+trimNum(s.tick)+'</td>'+
+        '<td class="num">'+money(s.tv,s.ccy)+'</td>'+
+        '<td class="num">'+money(ppv(s),s.ccy)+'</td>'+
+        '<td class="num">'+money(toKrw(ppv(s),s.ccy),"KRW")+'</td>'+
+        '<td class="num">'+money(s.margin,s.ccy)+'</td>';
+      tr.addEventListener("click",function(){ selectSym(s.id); window.scrollTo({top:0,behavior:"smooth"}); });
+      tb.appendChild(tr);
+    });
+  }
+
+  function renderRates(){
+    $("chipUsd").textContent = fmt(rates.usd,2);
+    $("chipJpy").textContent = fmt(rates.jpy100,2);
+    if(document.activeElement!==$("rUsd")) $("rUsd").value = rates.usd;
+    if(document.activeElement!==$("rJpy")) $("rJpy").value = rates.jpy100;
+    $("rateNote").textContent = rates.custom
+      ? "직접 입력한 환율을 쓰는 중이에요 (이 브라우저에 저장됨). 기본값: USD/KRW "+fmt(DEFAULT_RATES.usd,2)+", 100엔 "+fmt(DEFAULT_RATES.jpy100,2)+"원 ("+DEFAULT_RATES.asOf+")."
+      : DEFAULT_RATES.asOf+" 환율이에요. 숫자를 바꾸면 바로 반영되고 이 브라우저에 저장돼요.";
+  }
+
+  function selectSym(id){
+    state.sym = SYMS.filter(function(s){return s.id===id})[0];
+    Array.prototype.forEach.call(tabs.children,function(b){ b.setAttribute("aria-selected", b.dataset.id===id ? "true":"false"); });
+    var s = state.sym;
+    $("spec").innerHTML =
+      '<div><span>틱 사이즈</span><b>'+trimNum(s.tick)+'</b></div>'+
+      '<div><span>1틱 가치</span><b>'+money(s.tv,s.ccy)+'</b></div>'+
+      '<div><span>1포인트 가치</span><b>'+money(ppv(s),s.ccy)+'</b></div>';
+    updateModeHint();
+    renderTable();
+    updateCurBtn();
+    if(state.last) calc(true);
+  }
+
+  function updateModeHint(){
+    var s = state.sym, m = state.mode;
+    $("moveBox").hidden = (m==="price");
+    $("priceBox").hidden = (m!=="price");
+    if(m==="pt"){
+      $("moveLabel").textContent="움직인 포인트";
+      $("move").placeholder="예: 100   (손실이면 -100)";
+      $("moveHint").textContent="1포인트 = "+trimNum(1/s.tick)+"틱 = "+money(ppv(s),s.ccy)+" (1계약)";
+    }else if(m==="tick"){
+      $("moveLabel").textContent="움직인 틱 수";
+      $("move").placeholder="예: 20   (손실이면 -20)";
+      $("moveHint").textContent="1틱 = "+trimNum(s.tick)+"포인트 = "+money(s.tv,s.ccy)+" (1계약)";
+    }
+  }
+
+  function updateCurBtn(){
+    var native = state.sym.ccy==="JPY" ? "엔화로" : "달러로";
+    $("curBtn").textContent = state.showKrw ? native : "원화로";
+  }
+
+  function showErr(msg){ var e=$("err"); e.textContent=msg; e.hidden=!msg; }
+
+  function calc(silent){
+    var s = state.sym;
+    var q = num($("qty").value);
+    if(!(q>0)){ if(!silent) showErr("계약수를 1 이상으로 넣어주세요."); return; }
+    var pts;
+    if(state.mode==="price"){
+      var en=num($("entry").value), ex=num($("exit").value);
+      if(isNaN(en)||isNaN(ex)){ if(!silent) showErr("진입가와 청산가를 모두 넣어주세요."); return; }
+      pts = (ex-en)*(state.side==="buy"?1:-1);
+    }else{
+      var v=num($("move").value);
+      if(isNaN(v)){ if(!silent) showErr(state.mode==="pt"?"포인트를 넣어주세요. 손실이면 앞에 - 를 붙이면 돼요.":"틱 수를 넣어주세요. 손실이면 앞에 - 를 붙이면 돼요."); return; }
+      pts = state.mode==="tick" ? v*s.tick : v;
+    }
+    showErr("");
+    pts = Number(pts.toFixed(8));
+    var ticks = pts/s.tick;
+    var off = Math.abs(ticks-Math.round(ticks))>1e-6;
+    var pnl = pts*ppv(s)*q;
+    state.last = {pts:pts, ticks:ticks, q:q, pnl:pnl, off:off};
+    render();
+  }
+
+  function render(){
+    var r = state.last, s = state.sym, out=$("out");
+    if(!r){
+      out.innerHTML='<p class="empty">계약수와 움직임을 넣고 <b>계산하기</b>를 누르세요.<br>지금 고른 <b>'+s.name+'</b>은 1계약 기준 1포인트에 <b class="num">'+money(ppv(s),s.ccy)+'</b> ('+money(toKrw(ppv(s),s.ccy),"KRW")+') 움직여요.</p>';
+      return;
+    }
+    var cls = r.pnl>0?"up":r.pnl<0?"down":"";
+    var verdict = r.pnl>0?"▲ 수익":r.pnl<0?"▼ 손실":"본전";
+    var main = state.showKrw ? money(toKrw(r.pnl,s.ccy),"KRW",true) : money(r.pnl,s.ccy,true);
+    var alt = state.showKrw
+      ? (s.ccy==="JPY" ? money(r.pnl,"JPY",true)+" · 약 "+money(toUsd(r.pnl,"JPY"),"USD",true) : money(r.pnl,"USD",true))
+      : money(toKrw(r.pnl,s.ccy),"KRW",true) + (s.ccy==="JPY" ? " · 약 "+money(toUsd(r.pnl,"JPY"),"USD",true) : "");
+    var rateLine = s.ccy==="USD" ? "1달러 = "+fmt(rates.usd,2)+"원" : "100엔 = "+fmt(rates.jpy100,2)+"원";
+    var marginPct = r.pnl/(s.margin*r.q)*100;
+    var ptsTxt = (r.pts>0?"+":"")+fmt(r.pts, s.dec);
+    out.innerHTML =
+      '<div class="big '+cls+'">'+
+        '<span class="verdict">'+verdict+'</span>'+
+        '<span class="amt">'+main+'</span>'+
+        '<span class="alt">'+alt+'</span>'+
+      '</div>'+
+      '<p class="story"><b>'+s.name+'</b> <b class="num">'+fmt(r.q,0)+'계약</b>, <b class="num">'+ptsTxt+'포인트</b> ('+(r.ticks>0?"+":"")+fmt(r.ticks, r.off?2:0)+'틱) 움직였을 때 손익이에요.</p>'+
+      '<dl class="break">'+
+        '<dt>1틱 가치 × 틱 수 × 계약</dt><dd>'+money(s.tv,s.ccy)+' × '+fmt(r.ticks, r.off?2:0)+' × '+fmt(r.q,0)+'</dd>'+
+        '<dt>1포인트당 손익 ('+fmt(r.q,0)+'계약)</dt><dd>'+money(ppv(s)*r.q,s.ccy)+' · '+money(toKrw(ppv(s)*r.q,s.ccy),"KRW")+'</dd>'+
+        '<dt>1틱당 손익 ('+fmt(r.q,0)+'계약)</dt><dd>'+money(s.tv*r.q,s.ccy)+' · '+money(toKrw(s.tv*r.q,s.ccy),"KRW")+'</dd>'+
+        '<dt>위탁증거금 대비</dt><dd>'+(marginPct>0?"+":"")+fmt(marginPct,1)+'% <span style="color:var(--muted)">(증거금 '+money(s.margin*r.q,s.ccy)+')</span></dd>'+
+        '<dt>적용 환율</dt><dd>'+rateLine+'</dd>'+
+      '</dl>'+
+      (r.off ? '<p class="note">입력한 움직임이 틱 사이즈('+trimNum(s.tick)+')로 딱 나눠지지 않아요. 실제 체결은 틱 단위로만 움직여요.</p>' : '');
+  }
+
+  // 이벤트
+  $("calcBtn").addEventListener("click",function(){ calc(false); });
+  ["qty","move","entry","exit"].forEach(function(id){
+    $(id).addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); calc(false); } });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".chip"),function(c){
+    c.addEventListener("click",function(){ $("qty").value=c.dataset.q; if(state.last) calc(true); });
+  });
+  Array.prototype.forEach.call($("modeSeg").children,function(b){
+    b.addEventListener("click",function(){
+      state.mode=b.dataset.mode;
+      Array.prototype.forEach.call($("modeSeg").children,function(x){x.setAttribute("aria-pressed",x===b?"true":"false")});
+      $("move").value=""; state.last=null; showErr(""); updateModeHint(); render();
+    });
+  });
+  Array.prototype.forEach.call($("sideSeg").children,function(b){
+    b.addEventListener("click",function(){
+      state.side=b.dataset.side;
+      Array.prototype.forEach.call($("sideSeg").children,function(x){x.setAttribute("aria-pressed",x===b?"true":"false")});
+      if(state.last) calc(true);
+    });
+  });
+  $("curBtn").addEventListener("click",function(){ state.showKrw=!state.showKrw; updateCurBtn(); render(); });
+
+  function onRate(){
+    var u=num($("rUsd").value), j=num($("rJpy").value);
+    if(u>0 && j>0){
+      rates={usd:u, jpy100:j, custom:(u!==DEFAULT_RATES.usd||j!==DEFAULT_RATES.jpy100)};
+      try{ if(rates.custom) localStorage.setItem("pnl-rates",JSON.stringify(rates)); else localStorage.removeItem("pnl-rates"); }catch(e){}
+      renderRates(); renderTable(); render();
+    }
+  }
+  $("rUsd").addEventListener("input",onRate);
+  $("rJpy").addEventListener("input",onRate);
+
+  renderRates();
+  selectSym("MNQ");
+  render();
+})();
+</script>
+
+</html>
