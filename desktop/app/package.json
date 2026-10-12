@@ -1,0 +1,7 @@
+{
+  "name": "tick-calc",
+  "productName": "TickCalc",
+  "version": "1.0.0",
+  "description": "해외선물 틱 손익 계산기",
+  "main": "main.js"
+}
